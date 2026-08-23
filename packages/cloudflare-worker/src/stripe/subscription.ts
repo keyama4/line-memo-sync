@@ -1,6 +1,7 @@
 import type { SubscriptionData, SubscriptionResponse } from './types';
 
 const DEFAULT_FREE_LIMIT = 10;
+const DEFAULT_VOICE_FREE_LIMIT = 10;
 const GRACE_PERIOD_DAYS = 7;
 
 /**
@@ -21,13 +22,20 @@ export async function getSubscription(
       status: 'free',
       imageCount: 0,
       freeLimit: DEFAULT_FREE_LIMIT,
+      voiceCount: 0,
+      voiceFreeLimit: DEFAULT_VOICE_FREE_LIMIT,
       currentPeriodEnd: null,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
   }
 
-  return data;
+  // Records written before the voice feature lack the voice fields
+  return {
+    ...data,
+    voiceCount: data.voiceCount ?? 0,
+    voiceFreeLimit: data.voiceFreeLimit ?? DEFAULT_VOICE_FREE_LIMIT,
+  };
 }
 
 /**
@@ -64,21 +72,30 @@ export async function updateSubscription(
 }
 
 /**
- * Check if user can send an image
+ * Check if a subscription grants unlimited usage right now
+ * (active, or past_due within the grace period)
  */
-export function canSendImage(data: SubscriptionData): boolean {
-  // Active subscription: unlimited
+function hasUnlimitedAccess(data: SubscriptionData): boolean {
   if (data.status === 'active') {
     return true;
   }
 
-  // Past due with grace period
   if (data.status === 'past_due' && data.currentPeriodEnd) {
     const gracePeriodMs = GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000;
-    const now = Date.now();
-    if (now < data.currentPeriodEnd + gracePeriodMs) {
+    if (Date.now() < data.currentPeriodEnd + gracePeriodMs) {
       return true;
     }
+  }
+
+  return false;
+}
+
+/**
+ * Check if user can send an image
+ */
+export function canSendImage(data: SubscriptionData): boolean {
+  if (hasUnlimitedAccess(data)) {
+    return true;
   }
 
   // Free tier: check image count
@@ -86,17 +103,30 @@ export function canSendImage(data: SubscriptionData): boolean {
 }
 
 /**
- * Increment image count with retry for race condition handling
+ * Check if user can transcribe a voice message
+ */
+export function canUseVoice(data: SubscriptionData): boolean {
+  if (hasUnlimitedAccess(data)) {
+    return true;
+  }
+
+  // Free tier: check voice transcription count
+  return data.voiceCount < data.voiceFreeLimit;
+}
+
+/**
+ * Increment a usage counter with retry for race condition handling
  * Uses optimistic locking pattern to handle concurrent updates
  */
-export async function incrementImageCount(
+async function incrementUsageCount(
   kv: KVNamespace,
   lineUserId: string,
+  field: 'imageCount' | 'voiceCount',
   maxRetries: number = 3
 ): Promise<number> {
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     const subscription = await getSubscription(kv, lineUserId);
-    const newCount = subscription.imageCount + 1;
+    const newCount = subscription[field] + 1;
     const expectedUpdatedAt = subscription.updatedAt;
 
     // Re-read to check for concurrent modification
@@ -106,7 +136,7 @@ export async function incrementImageCount(
     if (!current) {
       const newData: SubscriptionData = {
         ...subscription,
-        imageCount: newCount,
+        [field]: newCount,
         updatedAt: Date.now(),
       };
       await kv.put(lineUserId, JSON.stringify(newData));
@@ -120,19 +150,41 @@ export async function incrementImageCount(
         continue;
       }
       // On last attempt, use the latest count
-      const latestCount = current.imageCount + 1;
-      await updateSubscription(kv, lineUserId, { imageCount: latestCount });
+      const latestCount = (current[field] ?? 0) + 1;
+      await updateSubscription(kv, lineUserId, { [field]: latestCount });
       return latestCount;
     }
 
     // No concurrent modification, safe to update
-    await updateSubscription(kv, lineUserId, { imageCount: newCount });
+    await updateSubscription(kv, lineUserId, { [field]: newCount });
     return newCount;
   }
 
   // Should not reach here, but fallback
   const subscription = await getSubscription(kv, lineUserId);
-  return subscription.imageCount;
+  return subscription[field];
+}
+
+/**
+ * Increment image count with retry for race condition handling
+ */
+export async function incrementImageCount(
+  kv: KVNamespace,
+  lineUserId: string,
+  maxRetries: number = 3
+): Promise<number> {
+  return incrementUsageCount(kv, lineUserId, 'imageCount', maxRetries);
+}
+
+/**
+ * Increment voice transcription count with retry for race condition handling
+ */
+export async function incrementVoiceCount(
+  kv: KVNamespace,
+  lineUserId: string,
+  maxRetries: number = 3
+): Promise<number> {
+  return incrementUsageCount(kv, lineUserId, 'voiceCount', maxRetries);
 }
 
 /**
@@ -140,18 +192,25 @@ export async function incrementImageCount(
  */
 export function toSubscriptionResponse(data: SubscriptionData): SubscriptionResponse {
   const canSend = canSendImage(data);
+  const canVoice = canUseVoice(data);
 
   let remainingFreeImages: number | null = null;
+  let remainingFreeVoice: number | null = null;
   if (data.status === 'free' || data.status === 'canceled') {
     remainingFreeImages = Math.max(0, data.freeLimit - data.imageCount);
+    remainingFreeVoice = Math.max(0, data.voiceFreeLimit - data.voiceCount);
   }
 
   return {
     status: data.status,
     imageCount: data.imageCount,
     freeLimit: data.freeLimit,
+    voiceCount: data.voiceCount,
+    voiceFreeLimit: data.voiceFreeLimit,
     canSendImage: canSend,
+    canUseVoice: canVoice,
     remainingFreeImages,
+    remainingFreeVoice,
   };
 }
 

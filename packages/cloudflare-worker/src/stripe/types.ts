@@ -1,10 +1,14 @@
 // Subscription data stored in LINE_SUBSCRIPTIONS KV
+// voiceCount / voiceFreeLimit are absent in records written before the voice
+// feature shipped; getSubscription() normalizes them on read.
 export interface SubscriptionData {
   stripeCustomerId: string;
   subscriptionId: string | null;
   status: 'free' | 'active' | 'past_due' | 'canceled';
   imageCount: number;
   freeLimit: number;
+  voiceCount: number;
+  voiceFreeLimit: number;
   currentPeriodEnd: number | null;
   createdAt: number;
   updatedAt: number;
@@ -15,8 +19,12 @@ export interface SubscriptionResponse {
   status: 'free' | 'active' | 'past_due' | 'canceled';
   imageCount: number;
   freeLimit: number;
+  voiceCount: number;
+  voiceFreeLimit: number;
   canSendImage: boolean;
+  canUseVoice: boolean;
   remainingFreeImages: number | null;
+  remainingFreeVoice: number | null;
 }
 
 // Stripe Checkout Session (minimal fields we need)

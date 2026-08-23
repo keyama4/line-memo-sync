@@ -4,7 +4,9 @@ import {
   saveSubscription,
   updateSubscription,
   canSendImage,
+  canUseVoice,
   incrementImageCount,
+  incrementVoiceCount,
   toSubscriptionResponse,
   saveCustomerIndex,
   findUserByCustomerId,
@@ -56,6 +58,8 @@ describe('Stripe Subscription', () => {
         status: 'free',
         imageCount: 0,
         freeLimit: 10,
+        voiceCount: 0,
+        voiceFreeLimit: 10,
         currentPeriodEnd: null,
         createdAt: Date.now(),
         updatedAt: Date.now(),
@@ -69,6 +73,8 @@ describe('Stripe Subscription', () => {
         status: 'active',
         imageCount: 5,
         freeLimit: 10,
+        voiceCount: 2,
+        voiceFreeLimit: 10,
         currentPeriodEnd: Date.now() + 30 * 24 * 60 * 60 * 1000,
         createdAt: Date.now() - 1000,
         updatedAt: Date.now() - 500,
@@ -79,6 +85,28 @@ describe('Stripe Subscription', () => {
       const result = await getSubscription(mockKV as any, 'U_existing');
 
       expect(result).toEqual(existingData);
+    });
+
+    it('voice機能追加前の旧レコードにはデフォルト値を補完する', async () => {
+      // voiceCount / voiceFreeLimit を持たない旧形式のレコード
+      const legacyData = {
+        stripeCustomerId: 'cus_legacy',
+        subscriptionId: 'sub_legacy',
+        status: 'active',
+        imageCount: 5,
+        freeLimit: 10,
+        currentPeriodEnd: null,
+        createdAt: Date.now() - 1000,
+        updatedAt: Date.now() - 500,
+      };
+
+      mockKV._store.set('U_legacy', JSON.stringify(legacyData));
+
+      const result = await getSubscription(mockKV as any, 'U_legacy');
+
+      expect(result.voiceCount).toBe(0);
+      expect(result.voiceFreeLimit).toBe(10);
+      expect(result.imageCount).toBe(5);
     });
   });
 
@@ -394,6 +422,8 @@ describe('Stripe Subscription', () => {
         status: 'free',
         imageCount: 3,
         freeLimit: 10,
+        voiceCount: 4,
+        voiceFreeLimit: 10,
         currentPeriodEnd: null,
         createdAt: Date.now(),
         updatedAt: Date.now(),
@@ -405,8 +435,12 @@ describe('Stripe Subscription', () => {
         status: 'free',
         imageCount: 3,
         freeLimit: 10,
+        voiceCount: 4,
+        voiceFreeLimit: 10,
         canSendImage: true,
+        canUseVoice: true,
         remainingFreeImages: 7,
+        remainingFreeVoice: 6,
       });
     });
 
@@ -417,6 +451,8 @@ describe('Stripe Subscription', () => {
         status: 'active',
         imageCount: 100,
         freeLimit: 10,
+        voiceCount: 50,
+        voiceFreeLimit: 10,
         currentPeriodEnd: Date.now() + 30 * 24 * 60 * 60 * 1000,
         createdAt: Date.now(),
         updatedAt: Date.now(),
@@ -428,8 +464,12 @@ describe('Stripe Subscription', () => {
         status: 'active',
         imageCount: 100,
         freeLimit: 10,
+        voiceCount: 50,
+        voiceFreeLimit: 10,
         canSendImage: true,
+        canUseVoice: true,
         remainingFreeImages: null,
+        remainingFreeVoice: null,
       });
     });
 
@@ -440,6 +480,8 @@ describe('Stripe Subscription', () => {
         status: 'free',
         imageCount: 15,
         freeLimit: 10,
+        voiceCount: 12,
+        voiceFreeLimit: 10,
         currentPeriodEnd: null,
         createdAt: Date.now(),
         updatedAt: Date.now(),
@@ -451,9 +493,98 @@ describe('Stripe Subscription', () => {
         status: 'free',
         imageCount: 15,
         freeLimit: 10,
+        voiceCount: 12,
+        voiceFreeLimit: 10,
         canSendImage: false,
+        canUseVoice: false,
         remainingFreeImages: 0, // マイナスにはならない
+        remainingFreeVoice: 0,
       });
+    });
+  });
+
+  describe('canUseVoice', () => {
+    const baseData: SubscriptionData = {
+      stripeCustomerId: '',
+      subscriptionId: null,
+      status: 'free',
+      imageCount: 0,
+      freeLimit: 10,
+      voiceCount: 0,
+      voiceFreeLimit: 10,
+      currentPeriodEnd: null,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+
+    it('アクティブなサブスクリプションは無制限', () => {
+      expect(canUseVoice({ ...baseData, status: 'active', voiceCount: 999 })).toBe(true);
+    });
+
+    it('無料ユーザーは枠内なら利用できる', () => {
+      expect(canUseVoice({ ...baseData, voiceCount: 9 })).toBe(true);
+    });
+
+    it('無料ユーザーは枠を使い切ると利用できない', () => {
+      expect(canUseVoice({ ...baseData, voiceCount: 10 })).toBe(false);
+    });
+
+    it('画像枠を使い切っていても音声枠には影響しない', () => {
+      expect(canUseVoice({ ...baseData, imageCount: 10, voiceCount: 0 })).toBe(true);
+    });
+
+    it('past_dueはグレースピリオド内なら利用できる', () => {
+      const data = {
+        ...baseData,
+        status: 'past_due' as const,
+        voiceCount: 999,
+        currentPeriodEnd: Date.now() - 1 * 24 * 60 * 60 * 1000, // 1日前に期限切れ
+      };
+      expect(canUseVoice(data)).toBe(true);
+    });
+
+    it('past_dueでグレースピリオドを過ぎ枠も使い切っていたら利用できない', () => {
+      const data = {
+        ...baseData,
+        status: 'past_due' as const,
+        voiceCount: 10,
+        currentPeriodEnd: Date.now() - 8 * 24 * 60 * 60 * 1000, // 8日前（グレース7日超過）
+      };
+      expect(canUseVoice(data)).toBe(false);
+    });
+  });
+
+  describe('incrementVoiceCount', () => {
+    it('voiceCountをインクリメントして返す', async () => {
+      const data: SubscriptionData = {
+        stripeCustomerId: '',
+        subscriptionId: null,
+        status: 'free',
+        imageCount: 3,
+        freeLimit: 10,
+        voiceCount: 5,
+        voiceFreeLimit: 10,
+        currentPeriodEnd: null,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      mockKV._store.set('U_voice', JSON.stringify(data));
+
+      const result = await incrementVoiceCount(mockKV as any, 'U_voice');
+
+      expect(result).toBe(6);
+      const saved = JSON.parse(mockKV._store.get('U_voice')!);
+      expect(saved.voiceCount).toBe(6);
+      expect(saved.imageCount).toBe(3); // 画像カウントには影響しない
+    });
+
+    it('データが存在しない場合は新規作成して1を返す', async () => {
+      const result = await incrementVoiceCount(mockKV as any, 'U_voice_new');
+
+      expect(result).toBe(1);
+      const saved = JSON.parse(mockKV._store.get('U_voice_new')!);
+      expect(saved.voiceCount).toBe(1);
+      expect(saved.imageCount).toBe(0);
     });
   });
 

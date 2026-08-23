@@ -552,6 +552,7 @@
           <ul>
             <li>テキストメッセージ無制限</li>
             <li>画像送信 10枚まで（累計）</li>
+            <li>音声文字起こし 10回まで（累計）</li>
             <li>エンドツーエンド暗号化</li>
             <li>自動同期</li>
           </ul>
@@ -563,12 +564,16 @@
           <ul>
             <li>テキストメッセージ無制限</li>
             <li>画像送信 無制限</li>
+            <li>音声メッセージの自動文字起こし 無制限</li>
             <li>エンドツーエンド暗号化</li>
             <li>自動同期</li>
           </ul>
           <a href="checkout.html" class="btn">アップグレード</a>
         </div>
       </div>
+      <p style="text-align: center; margin-top: 32px; color: #666; font-size: 14px;">
+        LINEで「アップグレード」または「/upgrade」と送るだけで、決済ページのリンクが届きます。
+      </p>
     </div>
   </section>
 
@@ -616,5 +621,17 @@
       </div>
     </div>
   </footer>
+
+  <script>
+    (function () {
+      var params = new URLSearchParams(window.location.search);
+      var userId = params.get('userId');
+      if (userId && /^U[a-f0-9]{32}$/.test(userId)) {
+        document.querySelectorAll('a[href^="checkout.html"]').forEach(function (link) {
+          link.href = 'checkout.html?userId=' + encodeURIComponent(userId);
+        });
+      }
+    })();
+  </script>
 </body>
 </html>

@@ -9,24 +9,51 @@ A plugin that connects Obsidian with LINE. Messages sent from LINE are automatic
 ## Features
 
 - **Automatic sync**: Save LINE messages as Obsidian notes automatically
-- **Message encryption**: Messages are encrypted before transmission
+- **Text messages**: Unlimited sync on both the Free and Premium plans
+- **Image sync**: Photos sent from LINE are saved to your vault (Free: up to 10 images total, Premium: unlimited)
+- **Voice transcription**: Voice messages sent from LINE are transcribed to text via Cloudflare Workers AI (Whisper) and synced as notes (Free: up to 10 transcriptions total, Premium: unlimited)
+- **End-to-end encryption**: Text and images are encrypted so the server cannot read them; see [Important Security and Privacy Notice](#important-security-and-privacy-notice) for how voice transcription differs
+- **LINE bot commands**: Check your LINE User ID, plan, and remaining quota, or upgrade — directly from the LINE chat (see [LINE Bot Commands](#line-bot-commands))
 - **Flexible organization**: Organize notes by date with customizable folder structure
 - **Custom file naming**: Use templates with variables like {date}, {time}, {messageId}
 - **Duplicate prevention**: Automatically handle duplicate messages
 - **Manual and auto-sync**: Sync on-demand or automatically at intervals
 - **Multi-vault support**: Connect multiple Obsidian vaults with unique Vault IDs
-- **Text support**: Currently supports text messages only
+
+## Pricing
+
+| | Free | Premium |
+|---|---|---|
+| Price | ¥0 | ¥300/month (tax included) |
+| Text sync | Unlimited | Unlimited |
+| Image sync | Up to 10 images total | Unlimited |
+| Voice transcription | Up to 10 transcriptions total | Unlimited |
+
+- Upgrade by sending `/upgrade` (or "アップグレード") to the LINE bot — it replies with a Stripe Checkout link directly in the chat
+- Manage billing or cancel anytime via the Stripe Customer Portal at [line-notes-sync.pages.dev](https://line-notes-sync.pages.dev)
+- You'll receive a LINE notification when a payment succeeds, fails, or your subscription is canceled
+
+## LINE Bot Commands
+
+Send these commands directly to the LINE Official Account:
+
+- `/myid` - Show your LINE User ID (needed when connecting the plugin)
+- `/status` - Check your current plan and remaining free quota for images and voice transcription
+- `/upgrade` or "アップグレード" - Get a Stripe Checkout link to subscribe to Premium
+
+You usually don't need to type these: the bot's replies come with tappable buttons (使い方 / プラン確認 / プレミアム登録) above the input field.
 
 ## Important Security and Privacy Notice
 
-**This plugin encrypts messages for secure transmission between LINE and Obsidian.**
+**Text messages and images are end-to-end encrypted. Voice transcription is not, because the server has to process the audio to transcribe it.**
 
-- Messages are encrypted before being sent to the server
-- Messages are stored in encrypted form on the Cloudflare server temporarily
-- The server cannot decrypt or read your message contents
-- Messages are automatically deleted from the server after 10 days
-- The server operates in the Japan region and only processes and forwards encrypted messages
-- While encryption provides security, we recommend avoiding extremely sensitive information
+- Text messages and images are encrypted before being sent to the server
+- Encrypted text and images are stored temporarily on the Cloudflare server; the server cannot decrypt or read their contents
+- **Voice messages are handled differently.** Transcribing audio requires it to be processed on the server: voice messages are sent to Cloudflare Workers AI (Whisper) for transcription. The audio file itself is never stored on the server and is discarded once transcription completes. The resulting transcribed text is then stored using the same end-to-end encryption as regular text messages
+- Text messages (including transcribed voice text) are automatically deleted from the server after 10 days
+- Images are deleted from the server as soon as they finish syncing to Obsidian; images that are never synced expire automatically after 7 days. Maximum image size is 10MB
+- The server operates in the Japan region
+- While encryption provides security, we recommend avoiding extremely sensitive information, especially in voice messages
 
 ## Setup Instructions
 
@@ -41,8 +68,8 @@ A plugin that connects Obsidian with LINE. Messages sent from LINE are automatic
 ### 2. LINE Setup
 
 1. Add [LINE Official Account](https://lin.ee/fq051VM) as a friend
-2. Send any message (e.g., `test`)
-3. After sending a message, you will receive your LINE User ID
+2. Send `/myid` (or any message)
+3. The bot replies with your LINE User ID
 4. Enter the returned LINE User ID in the Obsidian plugin settings
 
 ### 3. Plugin Configuration
@@ -90,9 +117,8 @@ Example: `{date}_{time}_LINE` → `2024-01-15_14-30-45_LINE.md`
 ## Limitations
 
 - **Desktop only**: This plugin is not available on Obsidian mobile
-- **Text messages only**: Images, videos, and other media types are not yet supported
 - **One-way sync**: Messages flow from LINE to Obsidian only
-- **Message expiration**: Messages are deleted from the server after 10 days
+- **Message expiration**: Text messages (and transcribed voice text) are deleted from the server after 10 days; images expire after 7 days if never synced
 
 ## Support
 

@@ -10,6 +10,9 @@ main.js
 .env.*
 !.env.sample
 
+# Local-only notes (README.local.md など)
+*.local.md
+
 # IDE and editor files
 .vscode/
 .idea/
@@ -52,4 +55,7 @@ build/
 coverage/
 
 # OS files
-Thumbs.db 
+Thumbs.db
+
+# Playwright MCP scratch output
+.playwright-mcp/

@@ -66,7 +66,9 @@ describe('LinePlugin', () => {
         imageFileNameTemplate: '{date}-{messageId}',
         subscriptionStatus: 'free',
         imageCount: 0,
-        freeLimit: 10
+        freeLimit: 10,
+        voiceCount: 0,
+        voiceFreeLimit: 10
       });
     });
 
@@ -97,7 +99,9 @@ describe('LinePlugin', () => {
         imageFileNameTemplate: '{date}-{messageId}',
         subscriptionStatus: 'free',
         imageCount: 0,
-        freeLimit: 10
+        freeLimit: 10,
+        voiceCount: 0,
+        voiceFreeLimit: 10
       });
     });
   });

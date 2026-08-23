@@ -29,12 +29,17 @@ interface LinePluginSettings {
   subscriptionStatus?: 'free' | 'active' | 'past_due' | 'canceled';
   imageCount?: number;
   freeLimit?: number;
+  voiceCount?: number;
+  voiceFreeLimit?: number;
 }
 
 interface SubscriptionResponse {
   status: 'free' | 'active' | 'past_due' | 'canceled';
   imageCount: number;
   freeLimit: number;
+  // Voice fields are absent on servers deployed before the voice feature
+  voiceCount?: number;
+  voiceFreeLimit?: number;
   canSendImage: boolean;
   remainingFreeImages: number | null;
 }
@@ -61,6 +66,8 @@ const DEFAULT_SETTINGS: LinePluginSettings = {
   subscriptionStatus: 'free',
   imageCount: 0,
   freeLimit: 10,
+  voiceCount: 0,
+  voiceFreeLimit: 10,
 }
 
 interface LineMessage {
@@ -273,6 +280,8 @@ export default class LinePlugin extends Plugin {
         this.settings.subscriptionStatus = data.status;
         this.settings.imageCount = data.imageCount;
         this.settings.freeLimit = data.freeLimit;
+        this.settings.voiceCount = data.voiceCount ?? 0;
+        this.settings.voiceFreeLimit = data.voiceFreeLimit ?? 10;
         await this.saveSettings();
         return true;
       }
@@ -928,17 +937,20 @@ class LineSettingTab extends PluginSettingTab {
     const status = this.plugin.settings.subscriptionStatus || 'free';
     const imageCount = this.plugin.settings.imageCount || 0;
     const freeLimit = this.plugin.settings.freeLimit || 10;
+    const voiceCount = this.plugin.settings.voiceCount || 0;
+    const voiceFreeLimit = this.plugin.settings.voiceFreeLimit || 10;
+    const usage = `画像: ${imageCount}/${freeLimit}枚・音声文字起こし: ${voiceCount}/${voiceFreeLimit}回使用済み`;
 
     switch (status) {
       case 'active':
-        return 'プレミアムプラン（画像無制限）';
+        return 'プレミアムプラン（画像・音声文字起こし無制限）';
       case 'past_due':
         return '支払い遅延中 - 支払い方法を確認してください';
       case 'canceled':
-        return `キャンセル済み（画像: ${imageCount}/${freeLimit}枚使用済み）`;
+        return `キャンセル済み（${usage}）`;
       case 'free':
       default:
-        return `無料プラン（画像: ${imageCount}/${freeLimit}枚使用済み）`;
+        return `無料プラン（${usage}）`;
     }
   }
 

@@ -15,6 +15,14 @@ LINE 公式アカウント「Obsidian Memo」と対で使います。
 
 正直な注意点: LINE からの受信は平文で届き、サーバー内で暗号化しています。端末間の完全な E2E ではなく、「保存後は運営者も読めない」設計です。
 
+## インストール（BRAT）
+
+1. Obsidian のコミュニティプラグインで「BRAT」を入れて有効化する
+2. BRAT の設定で「Add Beta plugin」を押し、`viable-inc/line-memo-sync` を入力する
+3. コミュニティプラグインの一覧で「LINE Memo Sync」を有効化する
+4. LINE で「Obsidian Memo」を友だち追加し、「連携コード」と送る
+5. プラグインの設定画面で連携コードを入れて「Register」を押す
+
 ## 構成
 
 ```

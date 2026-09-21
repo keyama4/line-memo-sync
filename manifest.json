@@ -1,7 +1,7 @@
 {
 	"id": "line-memo-sync",
 	"name": "LINE Memo Sync",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"minAppVersion": "1.3.0",
 	"description": "LINE に送ったメモを、そのまま Obsidian の Vault に取り込みます。",
 	"author": "Obsidian Memo",

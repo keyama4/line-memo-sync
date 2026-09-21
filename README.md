@@ -18,7 +18,7 @@ LINE 公式アカウント「Obsidian Memo」と対で使います。
 ## インストール（BRAT）
 
 1. Obsidian のコミュニティプラグインで「BRAT」を入れて有効化する
-2. BRAT の設定で「Add Beta plugin」を押し、`viable-inc/line-memo-sync` を入力する
+2. BRAT の設定で「Add Beta plugin」を押し、`keyama4/line-memo-sync` を入力する
 3. コミュニティプラグインの一覧で「LINE Memo Sync」を有効化する
 4. LINE で「Obsidian Memo」を友だち追加し、「連携コード」と送る
 5. プラグインの設定画面で連携コードを入れて「Register」を押す

@@ -57,21 +57,21 @@ describe('constants', () => {
       process.env.OBSIDIAN_LINE_API_URL = 'https://api.example.com';
       
       const { API_ENDPOINTS } = await importConstants();
-      expect(() => API_ENDPOINTS.MESSAGES('', 'user')).toThrow('vaultIdとuserIdは必須パラメータです');
+      expect(() => API_ENDPOINTS.MESSAGES('', 'user')).toThrow('Vault ID と LINE User ID の両方が必要です');
     });
 
     it('MESSAGESエンドポイントで空のuserIdが渡された場合、エラーが投げられる', async () => {
       process.env.OBSIDIAN_LINE_API_URL = 'https://api.example.com';
       
       const { API_ENDPOINTS } = await importConstants();
-      expect(() => API_ENDPOINTS.MESSAGES('vault', '')).toThrow('vaultIdとuserIdは必須パラメータです');
+      expect(() => API_ENDPOINTS.MESSAGES('vault', '')).toThrow('Vault ID と LINE User ID の両方が必要です');
     });
 
     it('MESSAGESエンドポイントで両方とも空の場合、エラーが投げられる', async () => {
       process.env.OBSIDIAN_LINE_API_URL = 'https://api.example.com';
       
       const { API_ENDPOINTS } = await importConstants();
-      expect(() => API_ENDPOINTS.MESSAGES('', '')).toThrow('vaultIdとuserIdは必須パラメータです');
+      expect(() => API_ENDPOINTS.MESSAGES('', '')).toThrow('Vault ID と LINE User ID の両方が必要です');
     });
   });
 }); 

@@ -62,11 +62,8 @@ jobs:
           # Update manifest.json and versions.json
           npm run version
           
-          # Update README.md version badge
-          sed -i "s/version-[0-9]\+\.[0-9]\+\.[0-9]\+-blue/version-${NEW_VERSION}-blue/g" README.md
-          
           # Commit changes
-          git add package.json manifest.json versions.json README.md
+          git add package.json manifest.json versions.json
           git commit -m "chore: update version to ${NEW_VERSION}"
           
           echo "CURRENT_VERSION=$CURRENT_VERSION" >> $GITHUB_ENV
@@ -76,6 +73,7 @@ jobs:
       - name: Build plugin
         env:
           OBSIDIAN_LINE_API_URL: ${{ secrets.OBSIDIAN_LINE_API_URL }}
+          LINE_ADD_FRIEND_URL: ${{ secrets.LINE_ADD_FRIEND_URL }}
           NODE_ENV: production
         run: pnpm --filter obsidian-plugin build
 

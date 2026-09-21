@@ -4,3 +4,11 @@
   border-radius: 5px;
   margin-bottom: 20px;
 }
+
+.line-memo-sync-intro {
+  margin-bottom: 1.5em;
+  color: var(--text-muted);
+}
+.line-memo-sync-intro ol {
+  margin: 0.5em 0 0 1.2em;
+}

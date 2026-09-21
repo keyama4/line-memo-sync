@@ -1,43 +1,54 @@
 const isLocalMode = process.env.NODE_ENV === 'local';
 
-const BASE_URL = process.env.OBSIDIAN_LINE_API_URL || 
-  (isLocalMode ? 'http://localhost:8787' : '');
+// ビルド時の既定値。設定画面の「API URL」で上書きできる（自分でサーバーを立てる人向け）
+export const DEFAULT_API_URL = process.env.OBSIDIAN_LINE_API_URL || (isLocalMode ? 'http://localhost:8787' : '');
+
+let baseUrl = DEFAULT_API_URL;
+
+export function setApiBaseUrl(url: string | undefined): void {
+  const trimmed = (url ?? '').trim().replace(/\/+$/, '');
+  baseUrl = trimmed || DEFAULT_API_URL;
+}
+
+export function getApiBaseUrl(): string {
+  return baseUrl;
+}
+
+function requireIds(vaultId: string, userId: string): void {
+  if (!vaultId || !userId) {
+    throw new Error('Vault ID と LINE User ID の両方が必要です');
+  }
+}
 
 export const API_ENDPOINTS = {
-  BASE_URL,
+  get BASE_URL(): string {
+    return baseUrl;
+  },
   MESSAGES: (vaultId: string, userId: string): string => {
-    if (!vaultId || !userId) {
-      throw new Error('vaultIdとuserIdは必須パラメータです');
-    }
-    return `${BASE_URL}/messages/${vaultId}/${userId}`;
+    requireIds(vaultId, userId);
+    return `${baseUrl}/messages/${vaultId}/${userId}`;
   },
-  MAPPING: `${BASE_URL}/mapping`,
-  DELETE_MAPPING: `${BASE_URL}/mapping`,
-  UPDATE_SYNC_STATUS: `${BASE_URL}/messages/update-sync-status`,
-  REGISTER_PUBLIC_KEY: `${BASE_URL}/publickey/register`,
-  GET_PUBLIC_KEY: (userId: string): string => `${BASE_URL}/publickey/${userId}`,
-  // Image endpoints
-  IMAGES: (vaultId: string, userId: string): string => {
-    if (!vaultId || !userId) {
-      throw new Error('vaultIdとuserIdは必須パラメータです');
-    }
-    return `${BASE_URL}/images/${vaultId}/${userId}`;
+  get MAPPING(): string {
+    return `${baseUrl}/mapping`;
   },
-  IMAGE_CONTENT: (vaultId: string, userId: string, messageId: string): string => {
-    if (!vaultId || !userId || !messageId) {
-      throw new Error('vaultId、userId、messageIdは必須パラメータです');
-    }
-    return `${BASE_URL}/images/${vaultId}/${userId}/${messageId}/content`;
+  get DELETE_MAPPING(): string {
+    return `${baseUrl}/mapping`;
   },
-  UPDATE_IMAGE_SYNC_STATUS: `${BASE_URL}/images/update-sync-status`,
-  // Subscription endpoints
-  SUBSCRIPTION: (lineUserId: string): string => {
-    if (!lineUserId) {
-      throw new Error('lineUserIdは必須パラメータです');
-    }
-    return `${BASE_URL}/subscription/${lineUserId}`;
+  get UPDATE_SYNC_STATUS(): string {
+    return `${baseUrl}/messages/update-sync-status`;
   },
-} as const;
+  get REGISTER_PUBLIC_KEY(): string {
+    return `${baseUrl}/publickey/register`;
+  },
+  GET_PUBLIC_KEY: (userId: string): string => `${baseUrl}/publickey/${userId}`,
+  get STATS(): string {
+    return `${baseUrl}/stats`;
+  },
+  get STATS_OPT_OUT(): string {
+    return `${baseUrl}/stats/opt-out`;
+  },
+};
 
-// Payment page URL (should match wrangler.toml PAYMENT_PAGE_URL)
-export const PAYMENT_PAGE_URL = process.env.PAYMENT_PAGE_URL || 'https://line-notes-sync.pages.dev';
+// LINE 公式アカウント「Obsidian Memo」の友だち追加リンク（ビルド時に埋め込む）
+export const LINE_ADD_FRIEND_URL = process.env.LINE_ADD_FRIEND_URL || '';
+export const PLUGIN_DISPLAY_NAME = 'LINE Memo Sync';

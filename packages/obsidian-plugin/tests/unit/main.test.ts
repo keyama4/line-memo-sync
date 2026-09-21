@@ -51,24 +51,17 @@ describe('LinePlugin', () => {
         noteFolderPath: 'LINE',
         vaultId: '',
         lineUserId: '',
-        autoSync: false,
+        autoSync: true,
         e2eeEnabled: true,
         syncInterval: 2,
-        syncOnStartup: false,
+        syncOnStartup: true,
         organizeByDate: false,
         fileNameTemplate: '{date}-{messageId}',
         groupMessagesByDate: false,
         groupedFileNameTemplate: '{date}',
         groupedFrontmatterTemplate: 'source: LINE\ndate: {date}',
         groupedMessageTemplate: '{time}: {text}',
-        syncImages: true,
-        imageFolderPath: 'LINE/images',
-        imageFileNameTemplate: '{date}-{messageId}',
-        subscriptionStatus: 'free',
-        imageCount: 0,
-        freeLimit: 10,
-        voiceCount: 0,
-        voiceFreeLimit: 10
+        shareStats: false
       });
     });
 
@@ -87,21 +80,14 @@ describe('LinePlugin', () => {
         autoSync: true,
         e2eeEnabled: true,
         syncInterval: 2,
-        syncOnStartup: false,
+        syncOnStartup: true,
         organizeByDate: false,
         fileNameTemplate: '{date}-{messageId}',
         groupMessagesByDate: false,
         groupedFileNameTemplate: '{date}',
         groupedFrontmatterTemplate: 'source: LINE\ndate: {date}',
         groupedMessageTemplate: '{time}: {text}',
-        syncImages: true,
-        imageFolderPath: 'LINE/images',
-        imageFileNameTemplate: '{date}-{messageId}',
-        subscriptionStatus: 'free',
-        imageCount: 0,
-        freeLimit: 10,
-        voiceCount: 0,
-        voiceFreeLimit: 10
+        shareStats: false
       });
     });
   });
@@ -317,7 +303,8 @@ describe('LinePlugin', () => {
       plugin.settings = {
         noteFolderPath: 'LINE',
         vaultId: ' test-vault ',
-        lineUserId: ' test-user ',
+        lineUserId: '',
+        pairingCode: ' 123456 ',
         autoSync: false,
         syncInterval: 1,
         syncOnStartup: false,
@@ -328,25 +315,22 @@ describe('LinePlugin', () => {
         groupedMessageTemplate: '{time}: {text}',
         groupedFrontmatterTemplate: 'source: LINE\ndate: {date}',
         groupedFileNameTemplate: '{date}',
-        syncImages: true,
-        imageFolderPath: 'LINE/images',
-        imageFileNameTemplate: '{date}-{messageId}'
+        shareStats: false
       };
 
-      vi.mocked(requestUrl).mockResolvedValue({ status: 200 } as any);
+      vi.mocked(requestUrl).mockResolvedValue({ status: 200, json: { status: 'ok', userId: 'U-from-server' } } as any);
 
       await plugin.registerMapping();
 
       expect(requestUrl).toHaveBeenCalledWith(expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({
-          userId: 'test-user',
-          vaultId: 'test-vault',
-        }),
+        body: JSON.stringify({ code: '123456', vaultId: 'test-vault' }),
       }));
+      expect(plugin.settings.lineUserId).toBe('U-from-server');
+      expect(plugin.settings.pairingCode).toBe('');
       expect(initialize).toHaveBeenCalled();
       expect(forceRegisterPublicKey).toHaveBeenCalled();
-      expect(Notice).toHaveBeenCalledWith('LINE UserIDとVault IDのマッピングとE2EE公開鍵を登録しました。');
+      expect(Notice).toHaveBeenCalledWith('連携できました。LINE にメモを送ってみてください。');
     });
 
     it('公開鍵登録に失敗した場合はマッピング成功だけを成功扱いしない', async () => {
@@ -363,7 +347,8 @@ describe('LinePlugin', () => {
       plugin.settings = {
         noteFolderPath: 'LINE',
         vaultId: 'test-vault',
-        lineUserId: 'test-user',
+        lineUserId: '',
+        pairingCode: '654321',
         autoSync: false,
         syncInterval: 1,
         syncOnStartup: false,
@@ -374,18 +359,16 @@ describe('LinePlugin', () => {
         groupedMessageTemplate: '{time}: {text}',
         groupedFrontmatterTemplate: 'source: LINE\ndate: {date}',
         groupedFileNameTemplate: '{date}',
-        syncImages: true,
-        imageFolderPath: 'LINE/images',
-        imageFileNameTemplate: '{date}-{messageId}'
+        shareStats: false
       };
 
-      vi.mocked(requestUrl).mockResolvedValue({ status: 200 } as any);
+      vi.mocked(requestUrl).mockResolvedValue({ status: 200, json: { status: 'ok', userId: 'U-from-server' } } as any);
 
       await plugin.registerMapping();
 
       expect(forceRegisterPublicKey).toHaveBeenCalled();
-      expect(Notice).toHaveBeenCalledWith('マッピングは登録されましたが、E2EE公開鍵の登録に失敗しました: key registration failed');
-      expect(Notice).not.toHaveBeenCalledWith('LINE UserIDとVault IDのマッピングとE2EE公開鍵を登録しました。');
+      expect(Notice).toHaveBeenCalledWith(expect.stringContaining('暗号化の鍵を登録できませんでした'));
+      expect(Notice).not.toHaveBeenCalledWith('連携できました。LINE にメモを送ってみてください。');
     });
   });
 });

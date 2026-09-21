@@ -1,4 +1,4 @@
-# Contributing to Obsidian Line Plugin
+# Contributing to LINE Memo Sync
 
 このプロジェクトへの貢献を検討していただき、ありがとうございます。
 
@@ -7,7 +7,7 @@
 1. リポジトリをクローンします
 ```bash
 git clone [your-repo-url]
-cd obsidian-line
+cd line-memo-sync
 ```
 
 2. 依存関係をインストールします

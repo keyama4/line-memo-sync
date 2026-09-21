@@ -1,6 +1,7 @@
 import { App, Plugin, PluginSettingTab, Setting, Notice, normalizePath, Modal, TFile, ToggleComponent } from 'obsidian';
 import { requestUrl } from 'obsidian';
-import { API_ENDPOINTS, PAYMENT_PAGE_URL } from './constants';
+import { API_ENDPOINTS, LINE_ADD_FRIEND_URL, PLUGIN_DISPLAY_NAME, setApiBaseUrl } from './constants';
+import { countByCategory, type CategoryCounts } from './classify';
 import { KeyManager } from './crypto/keyManager';
 import { MessageEncryptor } from './crypto/messageEncryptor';
 import { E2EEErrorHandler } from './crypto/errorHandler';
@@ -21,36 +22,19 @@ interface LinePluginSettings {
   groupedFrontmatterTemplate: string;
   groupedFileNameTemplate: string;
   apiUrl?: string;
-  // Image settings
-  syncImages: boolean;
-  imageFolderPath: string;
-  imageFileNameTemplate: string;
-  // Subscription settings (read from API, cached locally)
-  subscriptionStatus?: 'free' | 'active' | 'past_due' | 'canceled';
-  imageCount?: number;
-  freeLimit?: number;
-  voiceCount?: number;
-  voiceFreeLimit?: number;
+  shareStats: boolean;
+  pairingCode?: string;
 }
 
-interface SubscriptionResponse {
-  status: 'free' | 'active' | 'past_due' | 'canceled';
-  imageCount: number;
-  freeLimit: number;
-  // Voice fields are absent on servers deployed before the voice feature
-  voiceCount?: number;
-  voiceFreeLimit?: number;
-  canSendImage: boolean;
-  remainingFreeImages: number | null;
-}
+const UNREADABLE_PLACEHOLDER = '[メッセージを読み込めませんでした]';
 
 const DEFAULT_SETTINGS: LinePluginSettings = {
   noteFolderPath: 'LINE',
   vaultId: '',
   lineUserId: '',
-  autoSync: false,
+  autoSync: true,
   syncInterval: 2,
-  syncOnStartup: false,
+  syncOnStartup: true,
   organizeByDate: false,
   fileNameTemplate: '{date}-{messageId}',
   e2eeEnabled: true,
@@ -58,16 +42,7 @@ const DEFAULT_SETTINGS: LinePluginSettings = {
   groupedMessageTemplate: '{time}: {text}',
   groupedFrontmatterTemplate: 'source: LINE\ndate: {date}',
   groupedFileNameTemplate: '{date}',
-  // Image defaults
-  syncImages: true,
-  imageFolderPath: 'LINE/images',
-  imageFileNameTemplate: '{date}-{messageId}',
-  // Subscription defaults
-  subscriptionStatus: 'free',
-  imageCount: 0,
-  freeLimit: 10,
-  voiceCount: 0,
-  voiceFreeLimit: 10,
+  shareStats: false,
 }
 
 interface LineMessage {
@@ -84,24 +59,6 @@ interface LineMessage {
   senderKeyId?: string;
   recipientUserId?: string;
   version?: string;
-}
-
-interface ImageMessage {
-  timestamp: number;
-  messageId: string;
-  userId: string;
-  vaultId: string;
-  synced: boolean;
-  type: 'image';
-  contentType: string;
-  fileSize: number;
-  encrypted: boolean;
-  encryptedAESKey?: string;
-  iv?: string;
-  senderKeyId?: string;
-  recipientUserId?: string;
-  version?: string;
-  r2Key: string;
 }
 
 // Helper function for template parsing
@@ -146,13 +103,13 @@ export default class LinePlugin extends Plugin {
 
     this.addCommand({
       id: 'sync-line-messages',
-      name: 'Sync LINE messages',
+      name: 'LINE のメモを取り込む',
       callback: async () => {
         await this.syncMessages();
       },
     });
 
-    this.addRibbonIcon('refresh-cw', 'Sync LINE messages', async () => {
+    this.addRibbonIcon('refresh-cw', 'LINE のメモを取り込む', async () => {
       await this.syncMessages();
     });
 
@@ -174,6 +131,7 @@ export default class LinePlugin extends Plugin {
   async loadSettings() {
     const data = await this.loadData() || {};
     this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
+    setApiBaseUrl(this.settings.apiUrl);
   }
 
   async saveSettings() {
@@ -183,6 +141,7 @@ export default class LinePlugin extends Plugin {
       ...this.settings
     };
     await this.saveData(dataToSave);
+    setApiBaseUrl(this.settings.apiUrl);
     this.setupAutoSync();
   }
 
@@ -259,47 +218,10 @@ export default class LinePlugin extends Plugin {
     return parseMessageTemplate(template, message, messageText, getTimeString);
   }
 
-  /**
-   * Fetch subscription status from the server
-   * Returns true if successful, false otherwise
-   */
-  async fetchSubscriptionStatus(): Promise<boolean> {
-    if (!this.settings.lineUserId) {
-      return false;
-    }
-
-    try {
-      const url = API_ENDPOINTS.SUBSCRIPTION(this.settings.lineUserId);
-      const response = await requestUrl({
-        url: url,
-        method: 'GET',
-      });
-
-      if (response.status === 200) {
-        const data = JSON.parse(response.text) as SubscriptionResponse;
-        this.settings.subscriptionStatus = data.status;
-        this.settings.imageCount = data.imageCount;
-        this.settings.freeLimit = data.freeLimit;
-        this.settings.voiceCount = data.voiceCount ?? 0;
-        this.settings.voiceFreeLimit = data.voiceFreeLimit ?? 10;
-        await this.saveSettings();
-        return true;
-      }
-      return false;
-    } catch {
-      return false;
-    }
-  }
-
   private async syncMessages(isAutoSync = false) {
     if (!this.settings.vaultId) {
-      new Notice('Vault ID not configured. Please set it in plugin settings.');
+      new Notice('Vault ID が未設定です。設定画面で入力してください。');
       return;
-    }
-
-    // Fetch subscription status at the beginning of sync
-    if (this.settings.lineUserId) {
-      await this.fetchSubscriptionStatus();
     }
 
     const keys = await this.keyManager.loadKeys();
@@ -314,7 +236,7 @@ export default class LinePlugin extends Plugin {
 
     try {
       if (!isAutoSync) {
-        new Notice('Syncing LINE messages...');
+        new Notice('LINE のメモを取り込んでいます...');
       }
 
       const url = API_ENDPOINTS.MESSAGES(this.settings.vaultId, this.settings.lineUserId);
@@ -339,6 +261,7 @@ export default class LinePlugin extends Plugin {
 
       let newMessageCount = 0;
       const syncedMessageIds: string[] = [];
+      const syncedTexts: { date: string; text: string }[] = [];
 
       if (this.settings.groupMessagesByDate) {
         // Group messages by date
@@ -400,9 +323,9 @@ export default class LinePlugin extends Plugin {
               } catch (error) {
                 try {
                   const handled = await this.errorHandler.handleError(error as Error, `message_${message.messageId}`);
-                  messageText = handled ?? (message.text || '[メッセージを読み込めませんでした]');
+                  messageText = handled ?? (message.text || UNREADABLE_PLACEHOLDER);
                 } catch {
-                  messageText = message.text || '[メッセージを読み込めませんでした]';
+                  messageText = message.text || UNREADABLE_PLACEHOLDER;
                 }
               }
 
@@ -413,6 +336,9 @@ export default class LinePlugin extends Plugin {
               );
 
               newMessages.push(messageContent);
+              if (messageText !== UNREADABLE_PLACEHOLDER) {
+                syncedTexts.push({ date: getDateWithHyphens(message.timestamp), text: messageText });
+              }
               syncedMessageIds.push(message.messageId);
               newMessageCount++;
             }
@@ -482,9 +408,9 @@ export default class LinePlugin extends Plugin {
             } catch (error) {
               try {
                 const handled = await this.errorHandler.handleError(error as Error, `message_${message.messageId}`);
-                messageText = handled ?? (message.text || '[メッセージを読み込めませんでした]');
+                messageText = handled ?? (message.text || UNREADABLE_PLACEHOLDER);
               } catch {
-                messageText = message.text || '[メッセージを読み込めませんでした]';
+                messageText = message.text || UNREADABLE_PLACEHOLDER;
               }
             }
 
@@ -493,13 +419,15 @@ export default class LinePlugin extends Plugin {
               `source: LINE`,
               `date: ${getISOString(message.timestamp)}`,
               `messageId: ${message.messageId}`,
-              `userId: ${message.userId}`,
               `---`,
               ``,
               `${messageText}`
             ].join('\n');
 
             await this.app.vault.create(normalizedFilePath, content);
+            if (messageText !== UNREADABLE_PLACEHOLDER) {
+              syncedTexts.push({ date: getDateWithHyphens(message.timestamp), text: messageText });
+            }
             newMessageCount++;
             syncedMessageIds.push(message.messageId);
           } catch {
@@ -508,272 +436,28 @@ export default class LinePlugin extends Plugin {
         }
       }
 
+      let acknowledged = false;
       if (syncedMessageIds.length > 0) {
-        await this.updateSyncStatus(syncedMessageIds);
+        acknowledged = await this.updateSyncStatus(syncedMessageIds);
       }
 
-      // Sync images if enabled
-      let newImageCount = 0;
-      if (this.settings.syncImages) {
-        newImageCount = await this.syncImages();
+      if (acknowledged && this.settings.shareStats && syncedTexts.length > 0) {
+        await this.sendStats(syncedTexts);
       }
 
-      if (newMessageCount > 0 || newImageCount > 0 || !isAutoSync) {
-        const parts = [];
-        if (newMessageCount > 0) parts.push(`${newMessageCount} new messages`);
-        if (newImageCount > 0) parts.push(`${newImageCount} new images`);
-        const summary = parts.length > 0 ? parts.join(', ') : 'No new content';
-        new Notice(`LINE sync completed. ${summary}.`);
+      if (newMessageCount > 0 || !isAutoSync) {
+        const summary = newMessageCount > 0 ? `${newMessageCount}件のメモを取り込みました` : '新しいメモはありません';
+        new Notice(`LINE Memo Sync: ${summary}`);
       }
     } catch (err) {
-      new Notice(`Failed to sync LINE messages: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      new Notice(`LINE のメモを取り込めませんでした: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
   }
 
-  private async syncImages(): Promise<number> {
-    try {
-      const url = API_ENDPOINTS.IMAGES(this.settings.vaultId, this.settings.lineUserId);
-      const response = await requestUrl({
-        url: url,
-        method: 'GET',
-      });
-
-      if (response.status !== 200) {
-        throw new Error(`Failed to fetch images: ${response.status}`);
-      }
-
-      const images: ImageMessage[] = JSON.parse(response.text);
-      let newImageCount = 0;
-      const syncedImageIds: string[] = [];
-
-      for (const image of images) {
-        if (image.synced) {
-          continue;
-        }
-
-        try {
-          // Fetch image content
-          const contentUrl = API_ENDPOINTS.IMAGE_CONTENT(
-            this.settings.vaultId,
-            this.settings.lineUserId,
-            image.messageId
-          );
-          const contentResponse = await requestUrl({
-            url: contentUrl,
-            method: 'GET',
-          });
-
-          if (contentResponse.status !== 200) {
-            continue;
-          }
-
-          // Decrypt image if encrypted
-          let imageData: ArrayBuffer;
-          if (image.encrypted) {
-            imageData = await this.messageEncryptor.decryptImageData(
-              contentResponse.arrayBuffer,
-              {
-                encrypted: image.encrypted,
-                encryptedAESKey: image.encryptedAESKey,
-                iv: image.iv,
-                senderKeyId: image.senderKeyId,
-                recipientUserId: image.recipientUserId,
-                version: image.version
-              }
-            );
-          } else {
-            imageData = contentResponse.arrayBuffer;
-          }
-
-          // Ensure image folder exists
-          const normalizedImageFolderPath = normalizePath(this.settings.imageFolderPath);
-          const imageFolder = this.app.vault.getAbstractFileByPath(normalizedImageFolderPath);
-          if (!imageFolder) {
-            await this.app.vault.createFolder(normalizedImageFolderPath);
-          }
-
-          // Generate image file name
-          const extension = this.getExtensionFromContentType(image.contentType);
-          const imageFileName = this.generateImageFileName(image, extension);
-          const imageFilePath = normalizePath(`${this.settings.imageFolderPath}/${imageFileName}`);
-
-          // Save image file
-          await this.app.vault.createBinary(imageFilePath, imageData);
-
-          // Create note for the image
-          await this.createImageNote(image, imageFileName);
-
-          newImageCount++;
-          syncedImageIds.push(image.messageId);
-        } catch {
-          // Skip the failed image and continue syncing subsequent images.
-        }
-      }
-
-      if (syncedImageIds.length > 0) {
-        await this.updateImageSyncStatus(syncedImageIds);
-      }
-
-      return newImageCount;
-    } catch {
-      return 0;
-    }
-  }
-
-  private getExtensionFromContentType(contentType: string): string {
-    const mimeToExt: Record<string, string> = {
-      'image/jpeg': 'jpg',
-      'image/png': 'png',
-      'image/gif': 'gif',
-      'image/webp': 'webp',
-      'image/heic': 'heic',
-      'image/heif': 'heif',
-      'image/bmp': 'bmp',
-      'image/tiff': 'tiff',
-    };
-    return mimeToExt[contentType] || 'jpg';
-  }
-
-  private generateImageFileName(image: ImageMessage, extension: string): string {
-    const template = this.settings.imageFileNameTemplate;
-    const timestamp = image.timestamp;
-
-    const variables: Record<string, string> = {
-      '{date}': getDateWithHyphens(timestamp),
-      '{datecompact}': getDateString(timestamp),
-      '{time}': getTimeOnly(timestamp),
-      '{datetime}': getDateTimeForFileName(timestamp),
-      '{messageId}': image.messageId,
-      '{userId}': image.userId,
-      '{timestamp}': timestamp.toString()
-    };
-
-    let fileName = template;
-    for (const [variable, value] of Object.entries(variables)) {
-      fileName = fileName.replace(new RegExp(variable.replace(/[{}]/g, '\\$&'), 'g'), value);
-    }
-
-    return `${fileName}.${extension}`;
-  }
-
-  private async createImageNote(image: ImageMessage, imageFileName: string) {
-    // Determine note folder path
-    let noteFolderPath: string;
-    if (this.settings.organizeByDate) {
-      const dateString = getDateString(image.timestamp);
-      noteFolderPath = `${this.settings.noteFolderPath}/${dateString}`;
-    } else {
-      noteFolderPath = this.settings.noteFolderPath;
-    }
-
-    // Ensure note folder exists
-    const normalizedNoteFolderPath = normalizePath(noteFolderPath);
-    const noteFolder = this.app.vault.getAbstractFileByPath(normalizedNoteFolderPath);
-    if (!noteFolder) {
-      // Create parent folder first if needed
-      const normalizedBaseFolderPath = normalizePath(this.settings.noteFolderPath);
-      const baseFolder = this.app.vault.getAbstractFileByPath(normalizedBaseFolderPath);
-      if (!baseFolder) {
-        await this.app.vault.createFolder(normalizedBaseFolderPath);
-      }
-      await this.app.vault.createFolder(normalizedNoteFolderPath);
-    }
-
-    // Calculate relative path from note to image
-    const imageFullPath = `${this.settings.imageFolderPath}/${imageFileName}`;
-
-    if (this.settings.groupMessagesByDate) {
-      // Append to grouped file
-      const dateString = getDateString(image.timestamp);
-      const fileNameWithoutExt = parseFrontmatterTemplate(this.settings.groupedFileNameTemplate, dateString);
-      const fileName = `${fileNameWithoutExt}.md`;
-      const filePath = `${noteFolderPath}/${fileName}`;
-      const normalizedFilePath = normalizePath(filePath);
-
-      const imageEmbed = `![[${imageFullPath}]]`;
-      const timeString = getTimeString(image.timestamp);
-      const messageContent = `${timeString}: ${imageEmbed}`;
-
-      // Check if file exists
-      let existingContent = '';
-      const existingFile = this.app.vault.getAbstractFileByPath(normalizedFilePath);
-      if (existingFile instanceof TFile) {
-        existingContent = await this.app.vault.read(existingFile);
-      }
-
-      let finalContent: string;
-      if (existingContent) {
-        finalContent = existingContent.trimEnd() + '\n' + messageContent;
-      } else {
-        const parsedFrontmatter = parseFrontmatterTemplate(this.settings.groupedFrontmatterTemplate, dateString);
-        const frontmatter = [
-          `---`,
-          parsedFrontmatter,
-          `---`,
-          ``,
-          ''
-        ].join('\n');
-        finalContent = frontmatter + messageContent;
-      }
-
-      const fileToWrite = this.app.vault.getAbstractFileByPath(normalizedFilePath);
-      if (fileToWrite instanceof TFile) {
-        await this.app.vault.modify(fileToWrite, finalContent);
-      } else {
-        await this.app.vault.create(normalizedFilePath, finalContent);
-      }
-    } else {
-      // Create individual note for image
-      const noteFileName = this.generateImageFileName(image, 'md').replace(/\.md\.md$/, '.md');
-      const notePath = normalizePath(`${noteFolderPath}/${noteFileName}`);
-
-      const content = [
-        `---`,
-        `source: LINE`,
-        `date: ${getISOString(image.timestamp)}`,
-        `messageId: ${image.messageId}`,
-        `userId: ${image.userId}`,
-        `type: image`,
-        `---`,
-        ``,
-        `![[${imageFullPath}]]`
-      ].join('\n');
-
-      await this.app.vault.create(notePath, content);
-    }
-  }
-
-  private async updateImageSyncStatus(messageIds: string[]) {
+  private async updateSyncStatus(messageIds: string[]): Promise<boolean> {
     try {
       if (!this.settings.lineUserId) {
-        return;
-      }
-
-      const response = await requestUrl({
-        url: API_ENDPOINTS.UPDATE_IMAGE_SYNC_STATUS,
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          vaultId: this.settings.vaultId,
-          messageIds: messageIds,
-          userId: this.settings.lineUserId,
-        }),
-      });
-
-      if (response.status !== 200) {
-        return;
-      }
-    } catch {
-      return;
-    }
-  }
-
-  private async updateSyncStatus(messageIds: string[]) {
-    try {
-      if (!this.settings.lineUserId) {
-        return;
+        return false;
       }
 
       const response = await requestUrl({
@@ -789,11 +473,57 @@ export default class LinePlugin extends Plugin {
         }),
       });
 
-      if (response.status !== 200) {
-        return;
-      }
+      return response.status === 200;
     } catch {
+      return false;
+    }
+  }
+
+  // 本人がオンにした場合だけ、日付ごとの種類別件数を送る。本文は送らない
+  private async sendStats(entries: { date: string; text: string }[]) {
+    if (!this.settings.lineUserId || !this.settings.vaultId) {
       return;
+    }
+    const byDate = new Map<string, string[]>();
+    for (const entry of entries) {
+      if (!byDate.has(entry.date)) {
+        byDate.set(entry.date, []);
+      }
+      byDate.get(entry.date)!.push(entry.text);
+    }
+    for (const [date, texts] of byDate) {
+      const counts: CategoryCounts = countByCategory(texts);
+      try {
+        await requestUrl({
+          url: API_ENDPOINTS.STATS,
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: this.settings.lineUserId,
+            vaultId: this.settings.vaultId,
+            date,
+            counts,
+          }),
+        });
+      } catch {
+        // 集計はおまけなので、失敗しても同期は成功扱いにする
+      }
+    }
+  }
+
+  async sendStatsOptOut() {
+    if (!this.settings.lineUserId || !this.settings.vaultId) {
+      return;
+    }
+    try {
+      await requestUrl({
+        url: API_ENDPOINTS.STATS_OPT_OUT,
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: this.settings.lineUserId, vaultId: this.settings.vaultId }),
+      });
+    } catch {
+      // 次にオンにしたときの送信で上書きされるので、失敗は握りつぶす
     }
   }
 
@@ -813,15 +543,17 @@ export default class LinePlugin extends Plugin {
   }
 
   async registerMapping() {
-    const lineUserId = this.settings.lineUserId.trim();
-    const vaultId = this.settings.vaultId.trim();
+    const code = (this.settings.pairingCode ?? '').trim();
+    let vaultId = this.settings.vaultId.trim();
 
-    if (!lineUserId || !vaultId) {
-      new Notice('LINE UserIDとVault IDの両方を設定してください。');
+    if (!/^\d{6}$/.test(code)) {
+      new Notice('LINE から届いた6桁の連携コードを入力してください。');
       return;
     }
-
-    this.settings.lineUserId = lineUserId;
+    if (!vaultId) {
+      // 合言葉は認証に使うので、空なら推測されにくい値を作る
+      vaultId = crypto.randomUUID();
+    }
     this.settings.vaultId = vaultId;
     await this.saveSettings();
 
@@ -832,32 +564,41 @@ export default class LinePlugin extends Plugin {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          userId: lineUserId,
-          vaultId: vaultId,
-        }),
+        body: JSON.stringify({ code, vaultId }),
+        throw: false,
       });
 
-      if (response.status !== 200) {
-        throw new Error('マッピングの登録に失敗しました');
+      if (response.status === 404) {
+        throw new Error('連携コードが期限切れか間違っています。LINE で「連携コード」と送って新しいコードをもらってください');
       }
+      if (response.status !== 200) {
+        throw new Error(`サーバーが ${response.status} を返しました`);
+      }
+
+      const userId = (response.json as { userId?: string } | undefined)?.userId;
+      if (!userId) {
+        throw new Error('サーバーの応答に LINE User ID がありません');
+      }
+      this.settings.lineUserId = userId;
+      this.settings.pairingCode = '';
+      await this.saveSettings();
 
       try {
         await this.registerCurrentPublicKey();
       } catch (keyError) {
-        new Notice(`マッピングは登録されましたが、E2EE公開鍵の登録に失敗しました: ${keyError instanceof Error ? keyError.message : 'Unknown error'}`);
+        new Notice(`連携はできましたが、暗号化の鍵を登録できませんでした。もう一度 Register を押してください: ${keyError instanceof Error ? keyError.message : 'Unknown error'}`);
         return;
       }
 
-      new Notice('LINE UserIDとVault IDのマッピングとE2EE公開鍵を登録しました。');
+      new Notice('連携できました。LINE にメモを送ってみてください。');
     } catch (error) {
-      new Notice(`マッピングの登録に失敗しました: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      new Notice(`連携に失敗しました: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
   async resetMapping() {
     if (!this.settings.lineUserId || !this.settings.vaultId) {
-      new Notice('LINE UserIDとVault IDの両方を設定してください。');
+      new Notice('まだ連携されていません。');
       return;
     }
 
@@ -875,16 +616,16 @@ export default class LinePlugin extends Plugin {
       });
 
       if (response.status !== 200) {
-        throw new Error('マッピングのリセットに失敗しました');
+        throw new Error(`サーバーが ${response.status} を返しました`);
       }
 
       // Clear local settings
       this.settings.lineUserId = '';
       await this.saveSettings();
 
-      new Notice('LINE UserIDとVault IDのマッピングをリセットしました。');
+      new Notice('連携を解除しました。サーバーに残っていた未同期のメモも消えています。');
     } catch (error) {
-      new Notice(`マッピングのリセットに失敗しました: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      new Notice(`解除に失敗しました: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 }
@@ -899,8 +640,8 @@ class ConfirmResetModal extends Modal {
 
   onOpen() {
     const { contentEl } = this;
-    contentEl.createEl('h2', { text: 'マッピングをリセットしますか？' });
-    contentEl.createEl('p', { text: 'この操作により、LINE UserIDとVault IDの紐づけが削除されます。再度LINEを使用するには、マッピングの再登録が必要になります。' });
+    contentEl.createEl('h2', { text: '連携を解除しますか？' });
+    contentEl.createEl('p', { text: 'サーバー側の登録と、まだ取り込んでいないメモが消えます。もう一度使うには、LINE で新しい連携コードをもらって Register し直します。' });
 
     const buttonContainer = contentEl.createDiv({ cls: 'modal-button-container' });
 
@@ -910,7 +651,7 @@ class ConfirmResetModal extends Modal {
       });
 
     const confirmBtn = buttonContainer.createEl('button', {
-      text: 'リセットする',
+      text: '解除する',
       cls: 'mod-warning'
     });
     confirmBtn.addEventListener('click', () => {
@@ -933,32 +674,22 @@ class LineSettingTab extends PluginSettingTab {
     this.plugin = plugin;
   }
 
-  private getSubscriptionStatusText(): string {
-    const status = this.plugin.settings.subscriptionStatus || 'free';
-    const imageCount = this.plugin.settings.imageCount || 0;
-    const freeLimit = this.plugin.settings.freeLimit || 10;
-    const voiceCount = this.plugin.settings.voiceCount || 0;
-    const voiceFreeLimit = this.plugin.settings.voiceFreeLimit || 10;
-    const usage = `画像: ${imageCount}/${freeLimit}枚・音声文字起こし: ${voiceCount}/${voiceFreeLimit}回使用済み`;
-
-    switch (status) {
-      case 'active':
-        return 'プレミアムプラン（画像・音声文字起こし無制限）';
-      case 'past_due':
-        return '支払い遅延中 - 支払い方法を確認してください';
-      case 'canceled':
-        return `キャンセル済み（${usage}）`;
-      case 'free':
-      default:
-        return `無料プラン（${usage}）`;
-    }
-  }
-
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
 
     // Don't use top-level headings in settings tab
+
+    const intro = containerEl.createDiv({ cls: 'line-memo-sync-intro' });
+    intro.createEl('p', { text: `${PLUGIN_DISPLAY_NAME}: LINE に送ったメモが、この Vault に貯まります。` });
+    const steps = intro.createEl('ol');
+    steps.createEl('li', { text: '公式 LINE を友だち追加して「連携コード」と送る' });
+    steps.createEl('li', { text: '届いた6桁を下の「連携コード」に入れる' });
+    steps.createEl('li', { text: '「Register」を押す（Vault ID は空なら自動で作られます）' });
+    if (LINE_ADD_FRIEND_URL) {
+      const p = intro.createEl('p');
+      p.createEl('a', { text: '公式 LINE を友だち追加する', href: LINE_ADD_FRIEND_URL });
+    }
 
     new Setting(containerEl)
       .setName('Note folder path')
@@ -973,7 +704,7 @@ class LineSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('Vault ID')
-      .setDesc('このObsidian Vault用の一意の識別子（任意のユニークなIDを作成してください）')
+      .setDesc('この Vault だけがメモを取り出せるようにする合言葉。パスワードと同じ扱いで、他人に見せないでください。空のまま Register すると自動で作られます')
       .addText(text => text
         .setPlaceholder('Enter vault ID')
         .setValue(this.plugin.settings.vaultId)
@@ -983,15 +714,18 @@ class LineSettingTab extends PluginSettingTab {
         }));
 
     new Setting(containerEl)
-      .setName('LINE user ID')
-      .setDesc('LINEボットとの会話で取得したユーザーIDを入力してください')
+      .setName('連携コード')
+      .setDesc('LINE で「連携コード」と送ると届く6桁の数字。10分で期限が切れます')
       .addText(text => text
-        .setPlaceholder('Enter your LINE User ID')
-        .setValue(this.plugin.settings.lineUserId)
-        .onChange(async (value) => {
-          this.plugin.settings.lineUserId = value;
-          await this.plugin.saveSettings();
+        .setPlaceholder('123456')
+        .setValue(this.plugin.settings.pairingCode ?? '')
+        .onChange((value) => {
+          this.plugin.settings.pairingCode = value.trim();
         }));
+
+    new Setting(containerEl)
+      .setName('連携状態')
+      .setDesc(this.plugin.settings.lineUserId ? '連携済み。LINE に送ったメモがこの Vault に届きます' : '未連携。連携コードを入れて Register を押してください');
 
     new Setting(containerEl)
       .setName('Auto sync')
@@ -1172,116 +906,14 @@ class LineSettingTab extends PluginSettingTab {
       ul.createEl('li', { text: '{timestamp}: Unixタイムスタンプ' });
     });
 
-    // Image settings section
-    new Setting(containerEl)
-      .setHeading()
-      .setName('画像設定');
-
-    new Setting(containerEl)
-      .setName('Sync images')
-      .setDesc('LINEで送信した画像を同期するかどうか')
-      .addToggle(toggle => toggle
-        .setValue(this.plugin.settings.syncImages)
-        .onChange(async (value) => {
-          this.plugin.settings.syncImages = value;
-          await this.plugin.saveSettings();
-
-          // Show/hide image-related settings
-          imageFolderSetting.settingEl.toggle(value);
-          imageFileNameSetting.settingEl.toggle(value);
-        }));
-
-    const imageFolderSetting = new Setting(containerEl)
-      .setName('Image folder path')
-      .setDesc('画像ファイルの保存先フォルダ')
-      .addText(text => text
-        .setPlaceholder('LINE/images')
-        .setValue(this.plugin.settings.imageFolderPath)
-        .onChange(async (value) => {
-          this.plugin.settings.imageFolderPath = value || 'LINE/images';
-          await this.plugin.saveSettings();
-        }));
-
-    imageFolderSetting.settingEl.toggle(this.plugin.settings.syncImages);
-
-    const imageFileNameSetting = new Setting(containerEl)
-      .setName('Image file name template')
-      .setDesc('画像ファイルの命名テンプレート（拡張子は自動で付与されます）\n利用可能な変数: {date}, {datecompact}, {time}, {datetime}, {messageId}, {userId}, {timestamp}')
-      .addText(text => text
-        .setPlaceholder('{date}-{messageId}')
-        .setValue(this.plugin.settings.imageFileNameTemplate)
-        .onChange(async (value) => {
-          this.plugin.settings.imageFileNameTemplate = value || '{date}-{messageId}';
-          await this.plugin.saveSettings();
-        }));
-
-    imageFileNameSetting.settingEl.toggle(this.plugin.settings.syncImages);
-
-    // Premium plan section
-    new Setting(containerEl)
-      .setHeading()
-      .setName('プレミアムプラン');
-
-    // Subscription status display
-    const statusText = this.getSubscriptionStatusText();
-    const statusSetting = new Setting(containerEl)
-      .setName('現在のプラン')
-      .setDesc(statusText);
-
-    // Add upgrade/manage button based on status
-    if (this.plugin.settings.subscriptionStatus === 'active') {
-      statusSetting.addButton(button => button
-        .setButtonText('サブスクリプション管理')
-        .onClick(() => {
-          const userId = this.plugin.settings.lineUserId;
-          const url = userId
-            ? `${PAYMENT_PAGE_URL}/portal.html?userId=${userId}`
-            : `${PAYMENT_PAGE_URL}/portal.html`;
-          window.open(url, '_blank');
-        }));
-    } else {
-      statusSetting.addButton(button => button
-        .setButtonText('プレミアムプランにアップグレード')
-        .setCta()
-        .onClick(() => {
-          const userId = this.plugin.settings.lineUserId;
-          const url = userId
-            ? `${PAYMENT_PAGE_URL}?userId=${userId}`
-            : PAYMENT_PAGE_URL;
-          window.open(url, '_blank');
-        }));
-    }
-
-    // Refresh subscription status button
-    new Setting(containerEl)
-      .setName('サブスクリプション状態を更新')
-      .setDesc('サーバーから最新のサブスクリプション状態を取得します')
-      .addButton(button => button
-        .setButtonText('更新')
-        .onClick(async () => {
-          button.setDisabled(true);
-          button.setButtonText('更新中...');
-          try {
-            await this.plugin.fetchSubscriptionStatus();
-            new Notice('サブスクリプション状態を更新しました');
-            // Refresh the settings display
-            this.display();
-          } catch {
-            new Notice('サブスクリプション状態の取得に失敗しました');
-          } finally {
-            button.setDisabled(false);
-            button.setButtonText('更新');
-          }
-        }));
-
     // Connection settings section
     new Setting(containerEl)
       .setHeading()
       .setName('接続設定');
 
     new Setting(containerEl)
-      .setName('Register mapping')
-      .setDesc('LINE UserIDとVault IDのマッピングとE2EE公開鍵を登録します。メッセージを読み込めない場合もこの操作で接続を修復できます')
+      .setName('Register')
+      .setDesc('連携コードでこの Vault と LINE を結び、この Vault だけが読める暗号化の鍵を作ります。「設定が途中です」と LINE に言われたときも、このボタンで直せます')
       .addButton(button => button
         .setButtonText('Register')
         .onClick(async () => {
@@ -1289,12 +921,36 @@ class LineSettingTab extends PluginSettingTab {
         }));
 
     new Setting(containerEl)
+      .setName('利用状況の共有（種類別の件数だけ）')
+      .setDesc('オンにすると、取り込んだメモを「タスク／アイデア／リンク／メモ」に分けた件数だけを、日付ごとに送ります。メモの本文は送りません。この数字は、みんながどんなメモを貯めているかを知り、次の発信テーマを決める参考にします')
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.shareStats)
+        .onChange(async (value) => {
+          this.plugin.settings.shareStats = value;
+          await this.plugin.saveSettings();
+          if (!value) {
+            await this.plugin.sendStatsOptOut();
+          }
+        }));
+
+    new Setting(containerEl)
       .setHeading()
       .setName('詳細設定');
 
     new Setting(containerEl)
-      .setName('Reset mapping')
-      .setDesc('LINE UserIDとVault IDのマッピングをリセットします（KV上の紐づけを削除し、再登録可能にします）')
+      .setName('API URL')
+      .setDesc('自分で受付サーバーを立てる人向け。空欄なら公式のサーバーを使います')
+      .addText(text => text
+        .setPlaceholder('https://line-memo-sync.example.workers.dev')
+        .setValue(this.plugin.settings.apiUrl ?? '')
+        .onChange(async (value) => {
+          this.plugin.settings.apiUrl = value.trim();
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName('Reset')
+      .setDesc('サーバー側の登録を消します。別の Vault に付け替えたいときに使います')
       .addButton(button => button
         .setButtonText('Reset')
         .setWarning()

@@ -1,11 +1,10 @@
 {
-	"id": "line-notes-sync",
-	"name": "LINE Notes Sync",
-	"version": "0.7.0",
+	"id": "line-memo-sync",
+	"name": "LINE Memo Sync",
+	"version": "0.1.0",
 	"minAppVersion": "1.3.0",
-	"description": "Sync messages from LINE to your notes.",
-	"author": "onikun94",
-	"authorUrl": "https://github.com/onikun94",
-	"fundingUrl": "https://github.com/sponsors/onikun94",
+	"description": "LINE に送ったメモを、そのまま Obsidian の Vault に取り込みます。",
+	"author": "Obsidian Memo",
+	"authorUrl": "https://line.me/R/ti/p/@450xsede",
 	"isDesktopOnly": true
 }
